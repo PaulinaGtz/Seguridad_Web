@@ -2,14 +2,16 @@ from typing import List, Union
 from datetime import datetime, timedelta
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from fastapi.responses import HTMLResponse
 
 import crud, models, schemas
 from database import SessionLocal, engine
-from config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+from config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, UI_URL
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -18,6 +20,18 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 app = FastAPI()
+
+origins =[
+    UI_URL
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Dependency
 def get_db():
@@ -95,7 +109,7 @@ async def read_users_me(current_user: schemas.User = Depends(get_current_active_
     return current_user
 
 @app.post("/users/", response_model=schemas.User)
-def create_user(user: schemas.UserCreate, token: str = Depends(oauth2_scheme), db: Session= Depends(get_db)):
+def create_user(user: schemas.UserCreate, current_user: schemas.User = Depends(get_current_active_user), db: Session= Depends(get_db)):
     db_user = crud.get_user_by_email(db, email=user.email)
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -113,9 +127,16 @@ def read_user(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     return db_user
 
+@app.delete("/users/{user_id}", response_model=schemas.User)
+def delete_user(user_id: int, db: Session = Depends(get_db)):
+    db_user = crud.delete_user(db, user_id=user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return db_user
+
 @app.post("/users/{user_id}/items/", response_model=schemas.Item)
 def create_item_for_user(
-    user_id: int, item: schemas.ItemCreate,token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
+    user_id: int, item: schemas.ItemCreate, current_user: schemas.User = Depends(get_current_active_user), db: Session = Depends(get_db)
 ):
     return crud.create_user_item(db=db, item=item, user_id=user_id)
 
@@ -123,3 +144,22 @@ def create_item_for_user(
 def read_items(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     items = crud.get_items(db, skip=skip, limit=limit)
     return items
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    return """
+    <html>
+        <head>
+            <title>Some HTML in here</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-Zenh87qX5JnK2Jl0vWa8Ck2rdkQ2Bzep5IDxbcnCeuOxjzrPF/et3URy9Bv1WTRi" crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-OERcA2EqjJCMA+/3y+gxIOqMEjwtxJY7qPCqsdltbNJuaOe923+mo//f6V8Qbsw3" crossorigin="anonymous"></script>
+        </head>
+        <body>
+            <h1 class="title" style="background: blue">Look ma! HTML!</h1>
+            <script>
+                let h1 =  document.querySelector("body > h1")
+                h1.textContent = "Hola mundo"
+            </script>
+        </body>
+    </html>
+    """
